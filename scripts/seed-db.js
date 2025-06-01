@@ -210,8 +210,8 @@ async function seedDatabase() {
           aiSummary: { type: String, default: '' },
           medicalJargon: { type: Object, default:{} },
           researchAnlysisDiagnosis: { type: Object, default:{} },
-          researchFormatMD: { type: Object, default:{} },
-          researchFormatAgent: { type: Object, default:{} },
+          researchFormatMD: { type: String, default: " " },
+          researchFormatAgent: { type: String, default: " "}
 
         }, {
           timestamps: true
