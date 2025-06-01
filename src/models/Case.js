@@ -37,9 +37,31 @@ const CaseSchema = new mongoose.Schema({
             default: null
         }
     },
+    // Doctor information
+    doctorId: {
+        type: String,
+        default: null
+    },
+    doctorName: {
+        type: String,
+        default: ''
+    },
+    doctorComments: {
+        type: String,
+        default: ''
+    },
+    // Status fields
+    approved: {
+        type: Boolean,
+        default: false
+    },
     completed: {
         type: Boolean,
         default: false
+    },
+    completedAt: {
+        type: Date,
+        default: null
     },
     createdAt: {
         type: Date,

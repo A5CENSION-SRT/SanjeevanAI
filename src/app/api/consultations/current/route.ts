@@ -3,9 +3,30 @@ import mongoose from 'mongoose';
 
 // Use direct mongoose connection instead of importing from gitignored directory
 async function connectToDatabase() {
-  if (mongoose.connection.readyState >= 1) return;
+  if (mongoose.connection.readyState >= 1) {
+    console.log('Already connected to MongoDB');
+    return;
+  }
   
-  return mongoose.connect(process.env.MONGODB_URI || '');
+  // Connect to the specific database
+  console.log('Connecting to MongoDB with URI from env variables...');
+  const uri = process.env.MONGODB_URI || '';
+  
+  // Ensure we're connecting to the doctor_portal database
+  // If the URI doesn't specify a database, append it
+  let connectionUri = uri;
+  if (!uri.includes('doctor_portal')) {
+    // If URI ends with '/', just append the database name
+    if (uri.endsWith('/')) {
+      connectionUri = `${uri}doctor_portal`;
+    } else {
+      // Otherwise append /doctor_portal
+      connectionUri = `${uri}/doctor_portal`;
+    }
+  }
+  
+  console.log('Using database: doctor_portal');
+  return mongoose.connect(connectionUri);
 }
 
 // Function to get current patients with active cases
@@ -13,68 +34,121 @@ async function getCurrentPatients() {
   await connectToDatabase();
   
   try {
-    // Import models inside the function to avoid issues with schema registration
-    const PatientModel = mongoose.models.Patient || mongoose.model('Patient', new mongoose.Schema({}));
-    const CaseModel = mongoose.models.Case || mongoose.model('Case', new mongoose.Schema({}));
+    // Import models directly using the correct path
+    const PatientModel = mongoose.models.Patient || mongoose.model('Patient', require('@/models/Patient').schema);
+    const CaseModel = mongoose.models.Case || mongoose.model('Case', require('@/models/Case').schema);
     
-    // First try to load the schema properly
-    try {
-      if (!mongoose.models.Patient) {
-        const PatientSchema = require('@/models/Patient');
-        if (PatientSchema.default) {
-          mongoose.model('Patient', PatientSchema.default);
-        } else {
-          mongoose.model('Patient', PatientSchema);
-        }
-      }
-      
-      if (!mongoose.models.Case) {
-        const CaseSchema = require('@/models/Case');
-        if (CaseSchema.default) {
-          mongoose.model('Case', CaseSchema.default);
-        } else {
-          mongoose.model('Case', CaseSchema);
-        }
-      }
-    } catch (schemaError) {
-      console.error('Error loading schemas:', schemaError);
+    console.log('Models loaded successfully');
+    console.log('Database connection:', mongoose.connection.name);
+    
+    // Check if db is available before trying to list collections
+    if (mongoose.connection.db) {
+      const collections = await mongoose.connection.db.listCollections().toArray();
+      console.log('Collections:', collections.map(c => c.name));
+    } else {
+      console.log('Database connection not fully established yet');
     }
     
-    // Get the models after ensuring they're registered
-    const Patient = mongoose.models.Patient;
-    const Case = mongoose.models.Case;
+    // Get all patients first
+    const allPatients = await PatientModel.find({}).lean();
+    console.log('All patients found:', allPatients.length);
+    if (allPatients.length > 0) {
+      console.log('Sample patient:', JSON.stringify(allPatients[0], null, 2));
+    }
     
-    // First approach: Get cases with their patients populated
-    const activeCases = await Case.find({ completed: false })
+    // Get all cases regardless of doctor approval status
+    // Only filter by completed status to show active cases
+    const activeCases = await CaseModel.find({ completed: false })
       .populate('patientId')
       .lean();
     
     console.log('Active cases found:', activeCases.length);
-    
     if (activeCases.length > 0) {
-      // Extract unique patients from the populated cases
-      const patientsMap = new Map();
-      
-      activeCases.forEach((c: any) => {
-        if (c.patientId && typeof c.patientId === 'object') {
-          patientsMap.set(c.patientId._id.toString(), c.patientId);
+      console.log('Sample case:', JSON.stringify(activeCases[0], null, 2));
+    }
+    
+    // Create a map to track which patients already have cases
+    const patientIdsToCases = new Map();
+    
+    // Process all active cases
+    activeCases.forEach(c => {
+      if (c.patientId && typeof c.patientId === 'object') {
+        const patientId = c.patientId._id.toString();
+        patientIdsToCases.set(patientId, c._id);
+      }
+    });
+    
+    // Create a combined list of all patients with case information
+    const patientsWithCaseInfo: any[] = [];
+    
+    // First add patients that have active cases
+    for (const c of activeCases) {
+      if (c.patientId && typeof c.patientId === 'object') {
+        const patientId = c.patientId._id.toString();
+        
+        // Only add each patient once
+        if (!patientsWithCaseInfo.some(p => p._id.toString() === patientId)) {
+          // Keep nested objects intact
+          let aiSummary = c.aiAnalysis || c.patientHistory || 'No summary available';
+          
+          // Process research field if it exists
+          let research = c.research || null;
+          if (research && typeof research === 'object') {
+            research = 'Research data available';
+          }
+          
+          // Process FAQ field if it exists
+          let faq = c.faq || null;
+          if (faq && typeof faq === 'object') {
+            faq = 'FAQ data available';
+          }
+          
+          // Process prescription if it exists
+          let prescription = '';
+          if (c.prescription) {
+            if (typeof c.prescription === 'string') {
+              prescription = c.prescription;
+            } else if (typeof c.prescription === 'object' && c.prescription.content) {
+              prescription = c.prescription.content;
+            } else {
+              prescription = 'Prescription available';
+            }
+          }
+          
+          patientsWithCaseInfo.push({
+            ...c.patientId,
+            caseId: c._id,
+            aiSummary: aiSummary,
+            research: research,
+            faq: faq,
+            prescription: prescription,
+            transcript: c.transcript || '',
+            summary: c.patientHistory || '',
+            completed: c.completed || false,
+            approved: c.approved || false,
+            lastUpdated: c.updatedAt || c.createdAt
+          });
         }
+      }
+    }
+    
+    console.log('Patients with active cases:', patientsWithCaseInfo.length);
+    
+    // If there are patients but no active cases, return all patients
+    if (patientsWithCaseInfo.length === 0 && allPatients.length > 0) {
+      return allPatients.map(patient => {
+        // Keep medicalHistory in its original format
+        const medicalHistory = patient.medicalHistory || 'Patient requires consultation';
+        
+        return {
+          ...patient,
+          aiSummary: medicalHistory, // Keep original format
+          lastUpdated: patient.createdAt || new Date()
+        };
       });
-      
-      return Array.from(patientsMap.values());
     }
     
-    // Fallback approach: Get all patients and filter by cases
-    const allPatients = await Patient.find({}).lean();
-    console.log('All patients found:', allPatients.length);
-    
-    // If we have at least one patient, return the first one for testing
-    if (allPatients.length > 0) {
-      console.log('Returning first patient for testing');
-      return [allPatients[0]];
-    }
-    
-    return [];
+    return patientsWithCaseInfo;
   } catch (error) {
     console.error('Error in getCurrentPatients:', error);
     return [];
@@ -88,42 +162,63 @@ export async function GET() {
         console.log(`Found ${currentPatients.length} current patients`);
         
         // Process the current patients data to ensure compatibility with UI components
-        const processedPatients = currentPatients.map((patient: any) => {
+        const processedPatients = currentPatients.map((patient) => {
             // Keep the MongoDB _id for reference
             const originalId = patient._id ? patient._id.toString() : null;
             
-            // Make sure we have all the required fields for the CurrentPatient model
+            // Ensure caseId is a string if it exists
+            const caseId = patient.caseId ? 
+                (typeof patient.caseId === 'object' && patient.caseId._id ? 
+                    patient.caseId._id.toString() : 
+                    patient.caseId.toString()) : 
+                null;
+            
+            // Ensure aiSummary is always a string
+            let aiSummary = patient.aiSummary || patient.medicalHistory || 'No summary available';
+            if (typeof aiSummary !== 'string') {
+                aiSummary = JSON.stringify(aiSummary);
+            }
+            
+            // Ensure medicalHistory is always a string
+            let medicalHistory = patient.medicalHistory || '';
+            if (typeof medicalHistory !== 'string') {
+                medicalHistory = JSON.stringify(medicalHistory);
+            }
+            
+            // Map the database schema fields to the UI expected fields
             return {
-                ...patient,
                 _id: originalId, // Ensure _id is always a string
                 
-                // If there's an n8n format patient name that doesn't match our schema
-                patientName: patient.patientName || patient.name || 'Unknown',
-                patientAge: patient.patientAge || patient.age || 0,
-                patientGender: patient.patientGender || patient.gender || 'Unknown',
+                // Map patient fields from the database schema to UI expected fields
+                patientName: patient.name || 'Unknown',
+                patientAge: typeof patient.age === 'number' ? patient.age : 0,
+                patientGender: patient.gender || 'Unknown',
+                
+                // Include case information if available
+                caseId: caseId,
                 
                 // Ensure other required fields are present
                 contact: patient.contact || '',
                 email: patient.email || '',
                 address: patient.address || '',
-                medicalHistory: patient.medicalHistory || '',
                 
-                // Preserve any extra fields from the n8n workflow
-                conversation: patient.conversation || '',
-                postDocReport: patient.postDocReport || '',
-                preDocReport: patient.preDocReport || '',
-                
-                // Ensure we have an AI summary from any available source
-                aiSummary: patient.aiSummary || patient.medicalHistory || patient.postDocReport || 'No summary available',
+                // AI analysis and medical history
+                aiSummary: aiSummary,
+                medicalHistory: medicalHistory,
                 
                 // Make sure created date and last updated are always available
-                lastUpdated: patient.lastUpdated || patient.createdAt || new Date(),
-                consultationDate: patient.consultationDate || patient.createdAt || new Date(),
+                lastUpdated: patient.updatedAt || patient.createdAt || new Date(),
+                consultationDate: patient.createdAt || new Date(),
                 
                 // Default status if not provided
-                status: patient.status || 'active'
+                status: 'active'
             };
         });
+        
+        console.log('Processed patients:', processedPatients.length);
+        if (processedPatients.length > 0) {
+            console.log('Sample processed patient:', JSON.stringify(processedPatients[0], null, 2));
+        }
         
         return NextResponse.json({
             status: 'success',
