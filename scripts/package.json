@@ -1,0 +1,13 @@
+{
+    "name": "doctor-portal-db-init",
+    "version": "1.0.0",
+    "description": "Database initialization script for Doctor Portal",
+    "main": "init-db.js",
+    "scripts": {
+        "init": "node init-db.js"
+    },
+    "dependencies": {
+        "dotenv": "^16.3.1",
+        "mongoose": "^7.5.0"
+    }
+}
