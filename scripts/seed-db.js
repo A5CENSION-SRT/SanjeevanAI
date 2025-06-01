@@ -208,6 +208,11 @@ async function seedDatabase() {
             default: 'active' 
           },
           aiSummary: { type: String, default: '' },
+          medicalJargon: { type: String, default: '' },
+          researchAnlysisDiagnosis: { type: String, default: '' },
+          researchFormatMD: { type: String, default: '' },
+          researchFormatAgent: { type: String, default: '' },
+
         }, {
           timestamps: true
         });
