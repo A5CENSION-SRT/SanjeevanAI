@@ -1,0 +1,114 @@
+import { NextResponse } from 'next/server';
+import connectToDatabase from '@/lib/db/mongodb';
+import { Patient } from '@/lib/db/models/Patient';
+import { Case } from '@/lib/db/models/Case';
+import mongoose from 'mongoose';
+
+// GET a specific patient by ID and their cases
+export async function GET(request, { params }) {
+  try {
+    await connectToDatabase();
+    
+    const { id } = params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid patient ID format' },
+        { status: 400 }
+      );
+    }
+    
+    const patient = await Patient.findById(id);
+    
+    if (!patient) {
+      return NextResponse.json(
+        { success: false, message: 'Patient not found' },
+        { status: 404 }
+      );
+    }
+    
+    // Get cases for this patient
+    const cases = await Case.find({ patientId: id }).sort({ createdAt: -1 });
+    
+    return NextResponse.json({
+      success: true,
+      data: {
+        patient,
+        cases
+      }
+    }, { status: 200 });
+  } catch (error) {
+    console.error('Error fetching patient:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to fetch patient', error: error.message },
+      { status: 500 }
+    );
+  }
+}
+
+// PATCH to update a patient
+export async function PATCH(request, { params }) {
+  try {
+    await connectToDatabase();
+    
+    const { id } = params;
+    const body = await request.json();
+    const { name, age, gender, contact, email, address, medicalHistory } = body;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid patient ID format' },
+        { status: 400 }
+      );
+    }
+    
+    // Check if patient exists
+    const existingPatient = await Patient.findById(id);
+    
+    if (!existingPatient) {
+      return NextResponse.json(
+        { success: false, message: 'Patient not found' },
+        { status: 404 }
+      );
+    }
+    
+    // Check if email is unique if being updated
+    if (email && email !== existingPatient.email) {
+      const patientWithEmail = await Patient.findOne({ email });
+      
+      if (patientWithEmail) {
+        return NextResponse.json(
+          { success: false, message: 'Email is already in use by another patient' },
+          { status: 400 }
+        );
+      }
+    }
+    
+    const updatedPatient = await Patient.findByIdAndUpdate(
+      id,
+      {
+        ...(name !== undefined && { name }),
+        ...(age !== undefined && { age }),
+        ...(gender !== undefined && { gender }),
+        ...(contact !== undefined && { contact }),
+        ...(email !== undefined && { email }),
+        ...(address !== undefined && { address }),
+        ...(medicalHistory !== undefined && { medicalHistory }),
+        updatedAt: new Date()
+      },
+      { new: true, runValidators: true }
+    );
+    
+    return NextResponse.json({
+      success: true,
+      message: 'Patient updated successfully',
+      data: updatedPatient
+    }, { status: 200 });
+  } catch (error) {
+    console.error('Error updating patient:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to update patient', error: error.message },
+      { status: 500 }
+    );
+  }
+}

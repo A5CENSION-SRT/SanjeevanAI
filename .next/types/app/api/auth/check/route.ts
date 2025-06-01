@@ -1,4 +1,4 @@
-// File: /home/raghottam/Hackathons/git/SanjeevanAI/src/app/api/auth/check/route.ts
+// File: D:\Hackathons\100x\SanjeevanAI\src\app\api\auth\check\route.ts
 import * as entry from '../../../../../../src/app/api/auth/check/route.js'
 import type { NextRequest } from 'next/server.js'
 

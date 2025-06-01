@@ -1,37 +1,47 @@
 const mongoose = require('mongoose');
 
 const AppointmentSchema = new mongoose.Schema({
-    patient: {
+    patientId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Patient',
         required: true
     },
-    doctor: {
+    doctorId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Doctor',
         required: true
     },
-    date: {
-        type: Date,
-        required: [true, 'Please provide appointment date']
+    caseId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Case',
+        required: false
     },
-    time: {
-        type: String,
-        required: [true, 'Please provide appointment time']
+    appointmentDate: {
+        type: Date,
+        required: [true, 'Please provide appointment date and time']
+    },
+    endTime: {
+        type: Date,
+        required: true
+    },
+    duration: {
+        type: Number,
+        default: 30, // Duration in minutes
+        required: true
     },
     status: {
         type: String,
-        enum: ['Scheduled', 'Completed', 'Cancelled', 'No Show'],
-        default: 'Scheduled'
-    },
-    reason: {
-        type: String,
-        required: [true, 'Please provide reason for appointment']
+        enum: ['scheduled', 'completed', 'cancelled', 'no-show'],
+        default: 'scheduled'
     },
     notes: {
         type: String
     },
     createdAt: {
+        type: Date,
+        default: Date.now
+    },
+    updatedAt: {
         type: Date,
         default: Date.now
     }
