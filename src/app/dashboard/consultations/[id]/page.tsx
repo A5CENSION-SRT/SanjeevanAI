@@ -5,12 +5,41 @@ import { useParams, useRouter } from 'next/navigation';
 import { CurrentPatientDocument } from '@/types/mongodb';
 import Image from 'next/image';
 
+// Extended type to handle additional fields from the API
+interface ExtendedPatientDocument {
+  _id: string;
+  caseId?: string;
+  name?: string; // Added for consistency with dashboard
+  patientName?: string;
+  age?: number; // Added for consistency with dashboard
+  patientAge?: number;
+  gender?: string; // Added for consistency with dashboard
+  patientGender?: string;
+  patientPhone?: string;
+  contact?: string; // Added for consistency with dashboard
+  address?: string;
+  status?: string;
+  consultationDate?: string | Date;
+  transcript?: string;
+  summary?: string | { text?: string; [key: string]: any };
+  aiSummary?: string | { text?: string; [key: string]: any };
+  research?: string | { [key: string]: any };
+  prescription?: any;
+  lastUpdated?: string | Date;
+  conversation?: string;
+  medicalHistory?: string | { text?: string; [key: string]: any };
+  preDocReport?: string;
+  postDocReport?: string;
+  completed?: boolean;
+  [key: string]: any; // Allow for dynamic properties
+}
+
 export default function ConsultationPage() {
   const params = useParams();
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  const [consultation, setConsultation] = useState<CurrentPatientDocument | null>(null);
+  const [consultation, setConsultation] = useState<ExtendedPatientDocument | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [doctorNotes, setDoctorNotes] = useState('');
@@ -33,104 +62,167 @@ export default function ConsultationPage() {
   useEffect(() => {
     async function fetchConsultation() {
       try {
-        // Fetch from real MongoDB API endpoint
-        const response = await fetch(`/api/consultations/current`);
+        if (!consultationId) {
+          setError('No consultation ID provided');
+          setLoading(false);
+          return;
+        }
+
+        console.log(`Fetching consultation data for ID: ${consultationId}`);
         
-        if (!response.ok) {
-          throw new Error('Failed to fetch consultation');
+        // First try to fetch directly from the chat API which handles both patient and case IDs
+        const chatResponse = await fetch(`/api/consultations/${consultationId}/chat`);
+        let chatData: any = null;
+        
+        if (chatResponse.ok) {
+          chatData = await chatResponse.json();
+          console.log('Fetched chat data:', chatData);
         }
         
-        const data = await response.json();
+        // Now fetch the full patient data from current patients
+        const patientsResponse = await fetch(`/api/consultations/current`);
         
-        if (data.status === 'success') {
-          console.log('Fetched patient data:', data.data);
-          console.log('Looking for consultation with ID:', consultationId);
+        if (!patientsResponse.ok) {
+          throw new Error('Failed to fetch patients list');
+        }
+        
+        const patientsData = await patientsResponse.json();
+        
+        if (patientsData.status !== 'success' || !Array.isArray(patientsData.data)) {
+          throw new Error('Invalid patients data format');
+        }
+        
+        console.log('Fetched patient data:', patientsData.data);
+        
+        // Find the consultation with matching ID (either patient ID or case ID)
+        const foundConsultation = patientsData.data.find((patient: any) => {
+          // Check patient ID
+          const patientId = typeof patient._id === 'object' && patient._id !== null && 'toString' in patient._id
+            ? patient._id.toString() 
+            : String(patient._id);
+            
+          // Check case ID if available
+          const caseId = patient.caseId 
+            ? (typeof patient.caseId === 'object' && patient.caseId !== null && 'toString' in patient.caseId
+              ? patient.caseId.toString() 
+              : String(patient.caseId))
+            : null;
+            
+          const searchId = typeof consultationId === 'string' 
+            ? consultationId 
+            : String(consultationId);
+            
+          console.log(`Comparing patient ID ${patientId} and case ID ${caseId} with ${searchId}`);
+          return patientId === searchId || (caseId && caseId === searchId);
+        });
+        
+        if (foundConsultation) {
+          console.log('Found consultation in patients list:', foundConsultation);
+          setConsultation(foundConsultation);
           
-          // Find the consultation with matching ID
-          const foundConsultation = data.data.find((patient: any) => {
-            // Compare as strings to handle both ObjectId and string formats
-            const patientId = typeof patient._id === 'object' && patient._id !== null && 'toString' in patient._id
-              ? patient._id.toString() 
-              : String(patient._id);
-            const searchId = typeof consultationId === 'string' 
-              ? consultationId 
-              : String(consultationId);
+          // Parse conversation from the n8n workflow format if available
+          if (foundConsultation.conversation) {
+            try {
+              // If conversation is a string, try to parse it into chat format
+              const conversationString = typeof foundConsultation.conversation === 'string' 
+                ? foundConsultation.conversation 
+                : JSON.stringify(foundConsultation.conversation);
               
-            console.log(`Comparing ${patientId} with ${searchId}`);
-            return patientId === searchId;
-          });
+              // Simple parsing logic for "User: message, AI: response" format
+              const conversationParts = conversationString.split(/(?:User:|AI:)/g).filter(Boolean);
+              const parsedChat = [];
+              
+              for (let i = 0; i < conversationParts.length; i++) {
+                const content = conversationParts[i].trim();
+                if (content) {
+                  parsedChat.push({
+                    role: i % 2 === 0 ? 'user' : 'assistant',
+                    content: content,
+                    timestamp: new Date()
+                  });
+                }
+              }
+              
+              if (parsedChat.length > 0) {
+                setAiChat(parsedChat);
+              }
+            } catch (parseError) {
+              console.error('Failed to parse conversation:', parseError);
+            }
+          }
           
-          if (foundConsultation) {
-            console.log('Found consultation:', foundConsultation);
-            setConsultation(foundConsultation);
-            
-            // Parse conversation from the n8n workflow format if available
-            if (foundConsultation.conversation) {
-              try {
-                // If conversation is a string, try to parse it into chat format
-                const conversationString = foundConsultation.conversation;
+          // Also handle medical history if available
+          if (foundConsultation.medicalHistory) {
+            setDiagnosis(foundConsultation.medicalHistory);
+          }
+          
+          // Pre-populate prescription if available
+          if (foundConsultation.prescription) {
+            try {
+              const prescriptionData = typeof foundConsultation.prescription === 'string'
+                ? JSON.parse(foundConsultation.prescription)
+                : foundConsultation.prescription;
                 
-                // Simple parsing logic for "User: message, AI: response" format
-                const conversationParts = conversationString.split(/(?:User:|AI:)/g).filter(Boolean);
-                const parsedChat = [];
-                
-                for (let i = 0; i < conversationParts.length; i++) {
-                  const content = conversationParts[i].trim();
-                  if (content) {
-                    parsedChat.push({
-                      role: i % 2 === 0 ? 'user' : 'assistant',
-                      content: content,
-                      timestamp: new Date()
-                    });
-                  }
-                }
-                
-                if (parsedChat.length > 0) {
-                  setAiChat(parsedChat);
-                }
-              } catch (parseError) {
-                console.error('Failed to parse conversation:', parseError);
-              }
-            } else {
-              // Fall back to fetching AI chat history if conversation isn't available
-              try {
-                const chatResponse = await fetch(`/api/consultations/${consultationId}/chat`);
-                if (chatResponse.ok) {
-                  const chatData = await chatResponse.json();
-                  if (chatData.aiChat) {
-                    setAiChat(chatData.aiChat);
-                  }
-                }
-              } catch (chatError) {
-                console.error('Failed to fetch chat history:', chatError);
-              }
-            }
-            
-            // Also handle medical history if available
-            if (foundConsultation.medicalHistory) {
-              setDiagnosis(foundConsultation.medicalHistory);
-            }
-            
-            // Pre-populate prescription if available
-            if (foundConsultation.prescription) {
-              setDiagnosis(foundConsultation.prescription.diagnosis || '');
+              setDiagnosis(prescriptionData.diagnosis || '');
               
-              if (foundConsultation.prescription.medications && foundConsultation.prescription.medications.length > 0) {
-                setMedications(foundConsultation.prescription.medications);
+              if (prescriptionData.medications && prescriptionData.medications.length > 0) {
+                setMedications(prescriptionData.medications);
               }
               
-              if (foundConsultation.prescription.recommendations && foundConsultation.prescription.recommendations.length > 0) {
-                setRecommendations(foundConsultation.prescription.recommendations);
+              if (prescriptionData.recommendations && prescriptionData.recommendations.length > 0) {
+                setRecommendations(prescriptionData.recommendations);
               }
+            } catch (error) {
+              console.error('Failed to parse prescription data:', error);
             }
-            
-          } else {
-            console.error('Consultation not found. Available IDs:', 
-              data.data.map((p: any) => p._id));
-            throw new Error('Consultation not found');
+          }
+        } else if (chatData && chatData.status === 'success' && chatData.data) {
+          // If not found in the patients list but chat API returned data, create a consultation object
+          console.log('Creating consultation from chat data');
+          const chatConsultation = {
+            _id: chatData.data.patientId,
+            caseId: chatData.data.caseId,
+            patientName: chatData.data.patientName,
+            patientAge: chatData.data.patientAge,
+            patientGender: chatData.data.patientGender,
+            transcript: chatData.data.transcript,
+            summary: chatData.data.patientHistory,
+            aiSummary: chatData.data.aiAnalysis,
+            lastUpdated: chatData.data.lastUpdated || new Date()
+          };
+          setConsultation(chatConsultation);
+          
+          // Try to parse transcript into chat format if available
+          if (chatData.data.transcript) {
+            try {
+              const transcriptString = typeof chatData.data.transcript === 'string'
+                ? chatData.data.transcript
+                : JSON.stringify(chatData.data.transcript);
+                
+              // Simple parsing logic for "User: message, AI: response" format
+              const transcriptParts = transcriptString.split(/(?:User:|AI:)/g).filter(Boolean);
+              const parsedChat = [];
+              
+              for (let i = 0; i < transcriptParts.length; i++) {
+                const content = transcriptParts[i].trim();
+                if (content) {
+                  parsedChat.push({
+                    role: i % 2 === 0 ? 'user' : 'assistant',
+                    content: content,
+                    timestamp: new Date()
+                  });
+                }
+              }
+              
+              if (parsedChat.length > 0) {
+                setAiChat(parsedChat);
+              }
+            } catch (parseError) {
+              console.error('Failed to parse transcript:', parseError);
+            }
           }
         } else {
-          throw new Error(data.message || 'Failed to fetch consultation');
+          setError('Consultation not found');
         }
       } catch (error) {
         console.error('Error in fetchConsultation:', error);
@@ -333,11 +425,20 @@ export default function ConsultationPage() {
         <div className="space-y-6">
           <div className="bg-white rounded-lg shadow-lg overflow-hidden border border-indigo-100">
             <div className="bg-indigo-600 text-white px-6 py-4">
-              <h3 className="text-xl font-semibold">{consultation.patientName}</h3>
+              <h3 className="text-xl font-semibold">
+                {consultation?.name || consultation?.patientName || 'Unknown Patient'}
+              </h3>
               <div className="flex text-sm mt-1">
-                <span className="mr-4">{consultation.patientAge} years</span>
-                <span>{consultation.patientGender}</span>
+                <span className="mr-4">
+                  {consultation?.age || consultation?.patientAge || 'Unknown'} years
+                </span>
+                <span>{consultation?.gender || consultation?.patientGender || 'Unknown'}</span>
               </div>
+              {consultation?.patientPhone && (
+                <div className="text-sm mt-1">
+                  Contact: {consultation.patientPhone}
+                </div>
+              )}
             </div>
             
             <div className="p-6">
@@ -351,22 +452,89 @@ export default function ConsultationPage() {
                   <span className="text-green-600">Active</span> : 
                   <span className="text-amber-600">In Review</span>
                 }</p>
-                <p><span className="font-medium">Consultation Date:</span> {new Date(consultation.consultationDate).toLocaleString()}</p>
-                <p><span className="font-medium">Last Updated:</span> {new Date(consultation.lastUpdated).toLocaleString()}</p>
+                {consultation.consultationDate && (
+                  <p><span className="font-medium">Consultation Date:</span> {new Date(consultation.consultationDate).toLocaleString()}</p>
+                )}
+                {consultation.lastUpdated && (
+                  <p><span className="font-medium">Last Updated:</span> {new Date(consultation.lastUpdated).toLocaleString()}</p>
+                )}
                 
-                {consultation.medicalHistory && (
+                {consultation?.medicalHistory && (
                   <div className="mt-4">
                     <p className="font-medium">Medical History:</p>
                     <div className="bg-white p-3 mt-1 border border-gray-200 rounded">
-                      {consultation.medicalHistory}
+                      {(() => {
+                        // Try to extract text from medicalHistory
+                        if (typeof consultation.medicalHistory === 'string') {
+                          return consultation.medicalHistory;
+                        } else if (typeof consultation.medicalHistory === 'object' && consultation.medicalHistory?.text) {
+                          return consultation.medicalHistory.text;
+                        } else {
+                          // Try to extract meaningful content from the object
+                          try {
+                            // Check if medicalHistory exists and is an object
+                            if (consultation.medicalHistory && typeof consultation.medicalHistory === 'object') {
+                              const obj = consultation.medicalHistory;
+                              if (obj.text) return obj.text;
+                              if (obj.content) return obj.content;
+                              if (obj.summary) return obj.summary;
+                              if (obj.description) return obj.description;
+                            }
+                            return 'No medical history available';
+                          } catch (e) {
+                            return 'No medical history available';
+                          }
+                        }
+                      })()}
                     </div>
                   </div>
                 )}
+                
+                {/* AI Summary Section */}
+                <div className="mt-4">
+                  <p className="font-medium">AI Summary:</p>
+                  <div className="bg-white p-3 mt-1 border border-gray-200 rounded">
+                    {(() => {
+                      // Try to extract text from summary or aiSummary
+                      if (typeof consultation?.aiSummary === 'string') {
+                        return consultation.aiSummary;
+                      } else if (typeof consultation?.aiSummary === 'object' && consultation?.aiSummary?.text) {
+                        return consultation.aiSummary.text;
+                      } else if (typeof consultation?.summary === 'string') {
+                        return consultation.summary;
+                      } else if (typeof consultation?.summary === 'object' && consultation?.summary?.text) {
+                        return consultation.summary.text;
+                      } else {
+                        // Try to extract meaningful content from the object
+                        try {
+                          // Check if aiSummary exists and is an object
+                          if (consultation?.aiSummary && typeof consultation.aiSummary === 'object') {
+                            const obj = consultation.aiSummary;
+                            if (obj.text) return obj.text;
+                            if (obj.content) return obj.content;
+                            if (obj.summary) return obj.summary;
+                            if (obj.description) return obj.description;
+                          }
+                          // Check if summary exists and is an object
+                          if (consultation?.summary && typeof consultation.summary === 'object') {
+                            const obj = consultation.summary;
+                            if (obj.text) return obj.text;
+                            if (obj.content) return obj.content;
+                            if (obj.summary) return obj.summary;
+                            if (obj.description) return obj.description;
+                          }
+                          return 'No summary available';
+                        } catch (e) {
+                          return 'No summary available';
+                        }
+                      }
+                    })()}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
           
-          {/* AI Chat History */}
           <div className="bg-white rounded-lg shadow-lg overflow-hidden border border-indigo-100">
             <div className="bg-indigo-600 text-white px-6 py-4">
               <h3 className="text-xl font-semibold">Patient-AI Conversation</h3>
@@ -389,7 +557,7 @@ export default function ConsultationPage() {
                       >
                         <p className="text-sm">{message.content}</p>
                         <p className="text-xs text-gray-500 mt-1">
-                          {new Date(message.timestamp).toLocaleTimeString()}
+                          {message.timestamp ? new Date(message.timestamp).toLocaleTimeString() : 'Unknown time'}
                         </p>
                       </div>
                     </div>
@@ -416,10 +584,23 @@ export default function ConsultationPage() {
             
             <div className="p-6">
               <div className="bg-blue-50 p-4 rounded">
-                <p>{consultation.aiSummary}</p>
+                {(() => {
+                  // Handle aiSummary which could be string or object
+                  if (typeof consultation?.aiSummary === 'string') {
+                    return <p>{consultation.aiSummary}</p>;
+                  } else if (typeof consultation?.aiSummary === 'object' && consultation?.aiSummary) {
+                    const obj = consultation.aiSummary;
+                    if (obj.text) return <p>{obj.text}</p>;
+                    if (obj.content) return <p>{obj.content}</p>;
+                    if (obj.summary) return <p>{obj.summary}</p>;
+                    return <p>AI summary available (object format)</p>;
+                  } else {
+                    return <p>No AI summary available</p>;
+                  }
+                })()}
               </div>
               
-              {consultation.preDocReport && (
+              {consultation?.preDocReport && (
                 <div className="mt-4">
                   <h4 className="text-md font-medium text-gray-700 mb-2">Pre-Doctor Report</h4>
                   <div className="bg-yellow-50 p-4 rounded">
@@ -428,7 +609,7 @@ export default function ConsultationPage() {
                 </div>
               )}
               
-              {consultation.postDocReport && consultation.postDocReport !== consultation.preDocReport && (
+              {consultation?.postDocReport && consultation?.postDocReport !== consultation?.preDocReport && (
                 <div className="mt-4">
                   <h4 className="text-md font-medium text-gray-700 mb-2">Post-Doctor Report</h4>
                   <div className="bg-green-50 p-4 rounded">

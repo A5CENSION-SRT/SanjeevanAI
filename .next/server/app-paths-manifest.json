@@ -3,5 +3,8 @@
   "/page": "app/page.js",
   "/api/auth/check/route": "app/api/auth/check/route.js",
   "/api/consultations/current/route": "app/api/consultations/current/route.js",
-  "/dashboard/page": "app/dashboard/page.js"
+  "/api/consultations/approve/route": "app/api/consultations/approve/route.js",
+  "/auth/login/page": "app/auth/login/page.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/dashboard/completed/page": "app/dashboard/completed/page.js"
 }
