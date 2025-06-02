@@ -291,7 +291,7 @@ export default function DashboardPage() {
                 </div>
             ) : error ? (
                 <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded-md" role="alert">
-                    <p>{error}</p>
+                    <p>{error || ''}</p>
                 </div>
             ) : currentPatients.length === 0 ? (
                 <div className="bg-blue-50 p-8 rounded-lg text-center">
@@ -482,4 +482,4 @@ export default function DashboardPage() {
             )}
         </div>
     );
-} 
+}
