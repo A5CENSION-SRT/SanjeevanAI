@@ -29,4 +29,6 @@ export interface PatientDocument extends IPatient, Document {
 
 export interface CompletedConsultationDocument extends ICompletedConsultation, Document {
   _id: Types.ObjectId;
-} 
+}
+
+export type { CompletedConsultationDocument };
