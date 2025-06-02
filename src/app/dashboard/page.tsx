@@ -193,7 +193,7 @@ export default function DashboardPage() {
         // Prompt for prescription if approving
         let prescriptionText = "";
         if (approved) {
-            prescriptionText = prompt("Enter prescription for this patient (optional):", "");
+            prescriptionText = prompt("Enter prescription for this patient (optional):", "") || "";
         }
         
         // Set loading state for this specific case
