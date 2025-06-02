@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server';
 import connectToDatabase from '@/lib/db/mongodb';
 import mongoose from 'mongoose';
 
-// Import models
-const Appointment = mongoose.models.Appointment || mongoose.model('Appointment', require('@/models/Appointment'));
-const Doctor = mongoose.models.Doctor || mongoose.model('Doctor', require('@/models/Doctor'));
-const Patient = mongoose.models.Patient || mongoose.model('Patient', require('@/models/Patient'));
+// Import models using relative paths for Vercel compatibility
+const Appointment = mongoose.models.Appointment || mongoose.model('Appointment', require('../../../../models/Appointment'));
+const Doctor = mongoose.models.Doctor || mongoose.model('Doctor', require('../../../../models/Doctor'));
+const Patient = mongoose.models.Patient || mongoose.model('Patient', require('../../../../models/Patient'));
 
 // GET a specific appointment by ID
 export async function GET(request, { params }) {
@@ -21,7 +21,6 @@ export async function GET(request, { params }) {
       );
     }
     
-    const Appointment = mongoose.models.Appointment || mongoose.model('Appointment', require('@/models/Appointment').schema);
     const appointment = await Appointment.findById(id)
       .populate('doctorId', 'name specialization email phone')
       .populate('patientId', 'name age gender contact email')
@@ -60,7 +59,6 @@ export async function PATCH(request, { params }) {
       );
     }
     
-    const Appointment = mongoose.models.Appointment || mongoose.model('Appointment', require('@/models/Appointment').schema);
     const appointment = await Appointment.findById(id);
     
     if (!appointment) {
@@ -147,7 +145,6 @@ export async function DELETE(request, { params }) {
       );
     }
     
-    const Appointment = mongoose.models.Appointment || mongoose.model('Appointment', require('@/models/Appointment').schema);
     const deletedAppointment = await Appointment.findByIdAndDelete(id);
     
     if (!deletedAppointment) {
