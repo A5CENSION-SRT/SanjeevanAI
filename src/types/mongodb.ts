@@ -115,10 +115,3 @@ export interface PatientDocument {
   createdAt: string | Date;
   updatedAt: string | Date;
 }
-
-export type {
-  DoctorDocument,
-  MongooseCurrentPatientDocument,
-  MongoosePatientDocument,
-  CompletedConsultationDocument
-};
