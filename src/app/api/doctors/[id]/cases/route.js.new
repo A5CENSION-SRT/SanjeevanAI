@@ -1,0 +1,57 @@
+import { NextResponse } from 'next/server';
+import connectToDatabase from '@/lib/db/mongodb';
+import { Doctor } from '@/lib/db/models/Doctor';
+import { Case } from '@/lib/db/models/Case';
+import mongoose from 'mongoose';
+
+// GET cases assigned to a specific doctor
+export async function GET(request, { params }) {
+  try {
+    await connectToDatabase();
+    
+    const { id } = params;
+    const { searchParams } = new URL(request.url);
+    const completed = searchParams.get('completed');
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid doctor ID format' },
+        { status: 400 }
+      );
+    }
+    
+    // Check if doctor exists
+    const doctor = await Doctor.findById(id);
+    
+    if (!doctor) {
+      return NextResponse.json(
+        { success: false, message: 'Doctor not found' },
+        { status: 404 }
+      );
+    }
+    
+    // Build query
+    const query = { 'prescription.doctorId': id };
+    
+    // Add completed filter if provided
+    if (completed !== null) {
+      query.completed = completed === 'true';
+    }
+    
+    // Get cases where this doctor has written prescriptions
+    const cases = await Case.find(query)
+      .populate('patientId', 'name age gender')
+      .sort({ 'prescription.createdAt': -1 });
+    
+    return NextResponse.json({
+      success: true,
+      data: cases
+    }, { status: 200 });
+  } catch (error) {
+    console.error('Error fetching doctor cases:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to fetch doctor cases', error: error.message },
+      { status: 500 }
+    );
+  }
+}

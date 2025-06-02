@@ -1,0 +1,152 @@
+import { NextResponse } from 'next/server';
+import connectToDatabase from '@/lib/db/mongodb';
+import { Case } from '@/lib/db/models/Case';
+import { Patient } from '@/lib/db/models/Patient';
+import { Doctor } from '@/lib/db/models/Doctor';
+import mongoose from 'mongoose';
+
+// GET a specific case by ID
+export async function GET(request, { params }) {
+  try {
+    await connectToDatabase();
+    
+    const { id } = params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid case ID format' },
+        { status: 400 }
+      );
+    }
+    
+    const caseData = await Case.findById(id)
+      .populate('patientId')
+      .populate('prescription.doctorId');
+    
+    if (!caseData) {
+      return NextResponse.json(
+        { success: false, message: 'Case not found' },
+        { status: 404 }
+      );
+    }
+    
+    return NextResponse.json({ success: true, data: caseData }, { status: 200 });
+  } catch (error) {
+    console.error('Error fetching case:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to fetch case', error: error.message },
+      { status: 500 }
+    );
+  }
+}
+
+// PATCH to update a case
+export async function PATCH(request, { params }) {
+  try {
+    await connectToDatabase();
+    
+    const { id } = params;
+    const body = await request.json();
+    const { transcript, patientHistory, patientInfo, aiAnalysis, prescription, completed } = body;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid case ID format' },
+        { status: 400 }
+      );
+    }
+    
+    // Check if case exists
+    const existingCase = await Case.findById(id);
+    
+    if (!existingCase) {
+      return NextResponse.json(
+        { success: false, message: 'Case not found' },
+        { status: 404 }
+      );
+    }
+    
+    // Validate prescription if provided
+    if (prescription && prescription.doctorId) {
+      if (!mongoose.Types.ObjectId.isValid(prescription.doctorId)) {
+        return NextResponse.json(
+          { success: false, message: 'Invalid doctor ID format in prescription' },
+          { status: 400 }
+        );
+      }
+      
+      // Check if doctor exists
+      const doctor = await Doctor.findById(prescription.doctorId);
+      
+      if (!doctor) {
+        return NextResponse.json(
+          { success: false, message: 'Doctor not found for prescription' },
+          { status: 404 }
+        );
+      }
+    }
+    
+    const updatedCase = await Case.findByIdAndUpdate(
+      id,
+      {
+        ...(transcript !== undefined && { transcript }),
+        ...(patientHistory !== undefined && { patientHistory }),
+        ...(patientInfo !== undefined && { patientInfo }),
+        ...(aiAnalysis !== undefined && { aiAnalysis }),
+        ...(prescription !== undefined && { prescription }),
+        ...(completed !== undefined && { completed }),
+        updatedAt: new Date()
+      },
+      { new: true, runValidators: true }
+    ).populate('patientId').populate('prescription.doctorId');
+    
+    return NextResponse.json({
+      success: true,
+      message: 'Case updated successfully',
+      data: updatedCase
+    }, { status: 200 });
+  } catch (error) {
+    console.error('Error updating case:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to update case', error: error.message },
+      { status: 500 }
+    );
+  }
+}
+
+// DELETE a case
+export async function DELETE(request, { params }) {
+  try {
+    await connectToDatabase();
+    
+    const { id } = params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid case ID format' },
+        { status: 400 }
+      );
+    }
+    
+    const deletedCase = await Case.findByIdAndDelete(id);
+    
+    if (!deletedCase) {
+      return NextResponse.json(
+        { success: false, message: 'Case not found' },
+        { status: 404 }
+      );
+    }
+    
+    return NextResponse.json({
+      success: true,
+      message: 'Case deleted successfully',
+      data: deletedCase
+    }, { status: 200 });
+  } catch (error) {
+    console.error('Error deleting case:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to delete case', error: error.message },
+      { status: 500 }
+    );
+  }
+}

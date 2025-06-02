@@ -1,0 +1,249 @@
+import { NextResponse } from 'next/server';
+import connectToDatabase from '@/lib/db/mongodb';
+import { Appointment } from '@/lib/db/models/Appointment';
+import { Doctor } from '@/lib/db/models/Doctor';
+import { Patient } from '@/lib/db/models/Patient';
+import { Case } from '@/lib/db/models/Case';
+import mongoose from 'mongoose';
+
+// GET a specific appointment by ID
+export async function GET(request, { params }) {
+  try {
+    await connectToDatabase();
+    
+    const { id } = params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid appointment ID format' },
+        { status: 400 }
+      );
+    }
+    
+    const appointment = await Appointment.findById(id)
+      .populate('doctorId', 'name specialization email phone')
+      .populate('patientId', 'name age gender contact email')
+      .populate('caseId');
+    
+    if (!appointment) {
+      return NextResponse.json(
+        { success: false, message: 'Appointment not found' },
+        { status: 404 }
+      );
+    }
+    
+    return NextResponse.json({ success: true, data: appointment }, { status: 200 });
+  } catch (error) {
+    console.error('Error fetching appointment:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to fetch appointment', error: error.message },
+      { status: 500 }
+    );
+  }
+}
+
+// PATCH to update an appointment
+export async function PATCH(request, { params }) {
+  try {
+    await connectToDatabase();
+    
+    const { id } = params;
+    const body = await request.json();
+    const { doctorId, patientId, caseId, appointmentDate, duration, status, notes } = body;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid appointment ID format' },
+        { status: 400 }
+      );
+    }
+    
+    // Check if appointment exists
+    const existingAppointment = await Appointment.findById(id);
+    
+    if (!existingAppointment) {
+      return NextResponse.json(
+        { success: false, message: 'Appointment not found' },
+        { status: 404 }
+      );
+    }
+    
+    // Validate IDs if provided
+    if (doctorId && !mongoose.Types.ObjectId.isValid(doctorId)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid doctor ID format' },
+        { status: 400 }
+      );
+    }
+    
+    if (patientId && !mongoose.Types.ObjectId.isValid(patientId)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid patient ID format' },
+        { status: 400 }
+      );
+    }
+    
+    if (caseId && !mongoose.Types.ObjectId.isValid(caseId)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid case ID format' },
+        { status: 400 }
+      );
+    }
+    
+    // Check if doctor exists if provided
+    if (doctorId) {
+      const doctor = await Doctor.findById(doctorId);
+      
+      if (!doctor) {
+        return NextResponse.json(
+          { success: false, message: 'Doctor not found' },
+          { status: 404 }
+        );
+      }
+    }
+    
+    // Check if patient exists if provided
+    if (patientId) {
+      const patient = await Patient.findById(patientId);
+      
+      if (!patient) {
+        return NextResponse.json(
+          { success: false, message: 'Patient not found' },
+          { status: 404 }
+        );
+      }
+    }
+    
+    // Check if case exists and belongs to patient if provided
+    if (caseId) {
+      const caseData = await Case.findById(caseId);
+      
+      if (!caseData) {
+        return NextResponse.json(
+          { success: false, message: 'Case not found' },
+          { status: 404 }
+        );
+      }
+      
+      // Verify case belongs to the patient
+      const patientIdToCheck = patientId || existingAppointment.patientId;
+      if (caseData.patientId.toString() !== patientIdToCheck.toString()) {
+        return NextResponse.json(
+          { success: false, message: 'Case does not belong to the specified patient' },
+          { status: 400 }
+        );
+      }
+    }
+    
+    // Check for appointment conflicts if date or doctor is being changed
+    if (appointmentDate || doctorId) {
+      const appointmentStart = appointmentDate ? new Date(appointmentDate) : existingAppointment.appointmentDate;
+      const newDuration = duration || existingAppointment.duration;
+      const appointmentEnd = new Date(appointmentStart);
+      appointmentEnd.setMinutes(appointmentEnd.getMinutes() + newDuration);
+      
+      const doctorToCheck = doctorId || existingAppointment.doctorId;
+      
+      const conflictingAppointment = await Appointment.findOne({
+        _id: { $ne: id }, // Exclude current appointment
+        doctorId: doctorToCheck,
+        appointmentDate: { $lt: appointmentEnd },
+        endTime: { $gt: appointmentStart },
+        status: { $ne: 'cancelled' }
+      });
+      
+      if (conflictingAppointment) {
+        return NextResponse.json(
+          { success: false, message: 'Doctor already has an appointment scheduled during this time' },
+          { status: 400 }
+        );
+      }
+    }
+    
+    // Prepare update data
+    const updateData = {};
+    
+    if (doctorId) updateData.doctorId = doctorId;
+    if (patientId) updateData.patientId = patientId;
+    if (caseId) updateData.caseId = caseId;
+    if (status) updateData.status = status;
+    if (notes !== undefined) updateData.notes = notes;
+    
+    // Handle appointment date and duration updates
+    if (appointmentDate) {
+      updateData.appointmentDate = new Date(appointmentDate);
+      
+      // Update end time based on new appointment date and duration
+      const newDuration = duration || existingAppointment.duration;
+      const endTime = new Date(updateData.appointmentDate);
+      endTime.setMinutes(endTime.getMinutes() + newDuration);
+      updateData.endTime = endTime;
+    } else if (duration) {
+      // Update only duration and end time
+      updateData.duration = duration;
+      const endTime = new Date(existingAppointment.appointmentDate);
+      endTime.setMinutes(endTime.getMinutes() + duration);
+      updateData.endTime = endTime;
+    }
+    
+    updateData.updatedAt = new Date();
+    
+    const updatedAppointment = await Appointment.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true, runValidators: true }
+    )
+      .populate('doctorId', 'name specialization email phone')
+      .populate('patientId', 'name age gender contact email')
+      .populate('caseId');
+    
+    return NextResponse.json({
+      success: true,
+      message: 'Appointment updated successfully',
+      data: updatedAppointment
+    }, { status: 200 });
+  } catch (error) {
+    console.error('Error updating appointment:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to update appointment', error: error.message },
+      { status: 500 }
+    );
+  }
+}
+
+// DELETE an appointment
+export async function DELETE(request, { params }) {
+  try {
+    await connectToDatabase();
+    
+    const { id } = params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid appointment ID format' },
+        { status: 400 }
+      );
+    }
+    
+    const deletedAppointment = await Appointment.findByIdAndDelete(id);
+    
+    if (!deletedAppointment) {
+      return NextResponse.json(
+        { success: false, message: 'Appointment not found' },
+        { status: 404 }
+      );
+    }
+    
+    return NextResponse.json({
+      success: true,
+      message: 'Appointment deleted successfully',
+      data: deletedAppointment
+    }, { status: 200 });
+  } catch (error) {
+    console.error('Error deleting appointment:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to delete appointment', error: error.message },
+      { status: 500 }
+    );
+  }
+}
